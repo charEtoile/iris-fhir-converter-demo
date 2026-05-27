@@ -1,20 +1,5 @@
-from iop import Message, PydanticMessage
+from iop import PydanticMessage
 from CDS.models import RiskAssessmentInput, RiskCalculationResult
-from dataclasses import dataclass
-
-
-@dataclass
-class HttpMessageRequest(Message):
-    method: str
-    url: str
-    headers: dict
-    body: str
-
-@dataclass
-class HttpMessageResponse(Message):
-    status: int
-    headers: dict
-    body: str
 
 # No @dataclass decorator: IOP's _serialization.py explicitly raises SerializationError
 # when a class combines @dataclass with PydanticMessage (a BaseModel subclass).
