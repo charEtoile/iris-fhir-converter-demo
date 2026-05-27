@@ -1,5 +1,7 @@
 ARG IMAGE=containers.intersystems.com/intersystems/irishealth-community:latest-em
-FROM $IMAGE 
+
+# ─── Stage 1: base — slow layers, cached as long as requirements don't change ───
+FROM $IMAGE AS base
 
 USER root
 
@@ -15,7 +17,6 @@ ENV APP_HOME=${APP_HOME} \
 # For image tags: https://containers.intersystems.com/contents/containers
 # https://github.com/intersystems-community/iris-docker-zpm-usage-template/blob/master/module.xml
 # TODO: https://github.com/grongierisc/iris-docker-multi-stage-script
-
 
 # Packages installation and configuration
 RUN set -eux; \
@@ -34,33 +35,44 @@ RUN set -eux; \
 RUN mkdir -p "${APP_HOME}" && \
 	chown -R "${ISC_PACKAGE_MGRUSER}:${ISC_PACKAGE_IRISGROUP}" "${APP_HOME}"
 
-COPY --chown=${ISC_PACKAGE_MGRUSER}:${ISC_PACKAGE_IRISGROUP} ./key/iris.*.key /tmp/
-RUN cp "/tmp/iris.$(uname -m).key" "${ISC_PACKAGE_INSTALLDIR}/mgr/iris.key"
-
 USER ${ISC_PACKAGE_MGRUSER}
 
 # Python stuff
 # Note:
 # 	PYTHONPATH — standard Python variable, tells the Python interpreter where to find modules
-# 	PYTHON_PATH — a custom IRIS variable, not a Python standard. It points to the directory containing the Python executable 
+# 	PYTHON_PATH — a custom IRIS variable, not a Python standard. It points to the directory containing the Python executable
 ENV IRISUSERNAME="SuperUser" \
 	IRISPASSWORD="SYS" \
 	IRISNAMESPACE="EAI" \
 	PYTHONIOENCODING=UTF-8 \
 	PYTHONUNBUFFERED=1 \
 	PYTHON_PATH="${ISC_PACKAGE_INSTALLDIR}/bin/" \
+	PYTHONPATH="${APP_HOME}/src/CDS/python:${APP_HOME}/src/EAI/python" \
 	LD_LIBRARY_PATH="${ISC_PACKAGE_INSTALLDIR}/bin:${LD_LIBRARY_PATH}" \
 	PATH="${HOME}/.local/bin:${ISC_PACKAGE_INSTALLDIR}/bin:${PATH}"
 
-# Copy the source code
-COPY --chown=${ISC_PACKAGE_MGRUSER}:${ISC_PACKAGE_IRISGROUP} . "${APP_HOME}/"
+# Copy only requirements first — pip install is cached until any requirements file changes
+COPY --chown=${ISC_PACKAGE_MGRUSER}:${ISC_PACKAGE_IRISGROUP} requirements*.txt "${APP_HOME}/"
 
 # Install the requirements, force write into the system site-packages directory
 RUN pip3 install -r "${APP_HOME}/requirements.txt" \
 	--no-cache-dir \
 	--break-system-packages
 
-	# Cleanup
+# ─── Stage 2: app — fast rebuild, only re-runs when source code changes ──────
+FROM base AS app
+
+USER root
+
+COPY --chown=${ISC_PACKAGE_MGRUSER}:${ISC_PACKAGE_IRISGROUP} ./key/iris.*.key /tmp/
+RUN cp "/tmp/iris.$(uname -m).key" "${ISC_PACKAGE_INSTALLDIR}/mgr/iris.key"
+
+USER ${ISC_PACKAGE_MGRUSER}
+
+# Copy the full source code
+COPY --chown=${ISC_PACKAGE_MGRUSER}:${ISC_PACKAGE_IRISGROUP} . "${APP_HOME}/"
+
+# Cleanup
 RUN rm -f "${ISC_PACKAGE_INSTALLDIR}/mgr/alerts.log"; \
     rm -f "${ISC_PACKAGE_INSTALLDIR}/mgr/IRIS.WIJ"; \
     rm -f "${ISC_PACKAGE_INSTALLDIR}/mgr/journal/*"; \

@@ -7,10 +7,34 @@
         "port": 8081,
         "username": "SuperUser",
         "password": "SYS",
-        "ns": "FHIRSERVER"
+        "ns": "FHIRSERVER",
+        "links": {
+            "FHIR Dashboard": "http://localhost:${port}/csp/fhir-management/home",
+            "EAI Production": "http://localhost:${port}/csp/healthshare/eai/EnsPortal.ProductionConfig.zen"
+        },
+        "server": "server"
     },
     // Set java classpath
     "java.project.referencedLibraries": [
         "./src/FHIRSERVER/java/lib/validator_cli.jar"
+    ],
+    "intersystems.servers": {
+        "server": {
+            "webServer": {
+                "scheme": "http",
+                "host": "localhost",
+                "port": 8081
+            },
+            "description": "Iris server",
+            "username": "SuperUser",
+            "password": "SYS",
+        }
+    },
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "ms-python.python:pyenv",
+            "packageManager": "ms-python.python:pip"
+        }
     ],
 }

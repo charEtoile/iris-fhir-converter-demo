@@ -1,4 +1,10 @@
 -r requirements-grongier.txt
+a2wsgi
 deepdiff
+fastapi
+numpy
+pydantic-settings
+pydantic
 PyJWT
 requests
+scipy
