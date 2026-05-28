@@ -1,4 +1,5 @@
 import os
+import json
 
 import requests
 from liquid import FileSystemLoader
@@ -7,6 +8,8 @@ from fhir_converter.renderers import Hl7v2Renderer, make_environment, hl7v2_defa
 from iop import BusinessOperation
 
 from msg import FhirConverterMessage, FhirConverterResponse, FhirRequest, FhirResponse
+from CDS.models import RiskCalculationResult
+from CDS.interop.msg import RiskAssessmentInputRequest, RiskAssessmentResultResponse
 
 class FhirConverterOperation(BusinessOperation):
     def on_init(self):
@@ -54,7 +57,22 @@ class RandomRestOperation(BusinessOperation):
             headers=dict(response.headers),
             resource='random'
         )
-    
+
+class HttpOperation(BusinessOperation):
+    # Direct IRIS port — bypasses webgateway, no TLS for internal calls
+    url = 'http://localhost:52773/cds/hapi'
+
+    def on_risk_assessment_input_request(self, request: RiskAssessmentInputRequest) -> RiskAssessmentResultResponse:
+        response = requests.post(
+            self.url,
+            json=json.loads(request.input.model_dump_json()),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=10
+        )
+        response.raise_for_status()
+        result = RiskCalculationResult.model_validate(response.json())
+        return RiskAssessmentResultResponse(result=result)
+
 class FhirHttpOperation(BusinessOperation):
 
     def on_init(self):
@@ -83,6 +101,10 @@ class FhirHttpOperation(BusinessOperation):
             timeout=60,
             verify=False
         )
+
+        # log response body before raising so FHIR OperationOutcome is visible in the event log
+        if not response.ok:
+            self.log_warning(f"FHIR server error {response.status_code}: {response.text}")
         # check if the response is successful
         response.raise_for_status()
 
