@@ -1,7 +1,7 @@
 import os
 
 from bp import FhirMainProcess, FhirConverterProcess
-from bo import FhirHttpOperation, RandomRestOperation, FhirConverterOperation
+from bo import FhirHttpOperation, RandomRestOperation, FhirConverterOperation, HttpOperation
 
 
 CLASSES = {
@@ -9,7 +9,8 @@ CLASSES = {
     'Python.EAI.bo.FhirHttpOperation' : FhirHttpOperation,
     'Python.FhirConverterProcess' : FhirConverterProcess,
     'Python.FhirConverterOperation' : FhirConverterOperation,
-    'Python.EAI.bo.RandomRestOperation' : RandomRestOperation
+    'Python.EAI.bo.RandomRestOperation' : RandomRestOperation,
+    'Python.EAI.bo.HttpOperation' : HttpOperation
 }
 
 PRODUCTIONS = [
@@ -48,6 +49,13 @@ PRODUCTIONS = [
                 "@Name": "RANDOM_REST_HTTP",
                 "@Category": "",
                 "@ClassName": "Python.EAI.bo.RandomRestOperation",
+                "@PoolSize": "1",
+                "@Enabled": "true",
+            },
+            {
+                "@Name": "CdsHapiRiskOperation",
+                "@Category": "",
+                "@ClassName": "Python.EAI.bo.HttpOperation",
                 "@PoolSize": "1",
                 "@Enabled": "true",
             },
