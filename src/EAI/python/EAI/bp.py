@@ -1,11 +1,15 @@
 import os
+import json
+import uuid
+from datetime import date, datetime, timezone
 
 from iop import BusinessProcess
 import iris
 import jwt
-import json
 
 from msg import FhirRequest, FhirConverterMessage
+from CDS.models import RiskAssessmentInput, RiskCalculationResult
+from CDS.interop.msg import RiskAssessmentInputRequest, RiskAssessmentResultResponse
 
 class FhirConverterProcess(BusinessProcess):
     def on_enslib_message(self, request: 'iris.EnsLib.HL7.Message'):
@@ -24,7 +28,19 @@ class FhirConverterProcess(BusinessProcess):
         response = self.send_request_sync("Python.FhirConverterOperation", request)
         response.output_filename = request.input_filename.replace('.hl7', '.json')
 
-        # send this to lorah
+        # Enhance the converted FHIR bundle with a HAPI pressure injury RiskAssessment
+        try:
+            fhir_data = json.loads(response.output_data)
+            hapi_input, patient_ref = self._extract_hapi_input(fhir_data)
+            risk_request = RiskAssessmentInputRequest(input=hapi_input)
+            risk_response: RiskAssessmentResultResponse = self.send_request_sync("CdsHapiRiskOperation", risk_request)
+            risk_assessment = self._build_risk_assessment(risk_response.result, patient_ref)
+            fhir_data = self._add_to_bundle(fhir_data, risk_assessment)
+            response.output_data = json.dumps(fhir_data)
+        except Exception as e:
+            self.log_warning(f"HAPI risk enhancement failed, sending original bundle: {e}")
+
+        # send this to the FHIR server
         fhir_request = FhirRequest(
             url='https://webgateway',
             resource='fhir/r4/',
@@ -33,6 +49,116 @@ class FhirConverterProcess(BusinessProcess):
             headers={'Accept': 'application/json', 'Content-Type': 'application/json+fhir'}
         )
         self.send_request_sync("FHIR_PYTHON_HTTP", fhir_request)
+
+    def _extract_hapi_input(self, fhir_data: dict) -> tuple:
+        """Extract patient data from a FHIR Bundle/Patient for HAPI risk input.
+        Returns (input_dict, patient_reference).
+        """
+        patient = None
+        patient_ref = "Patient/unknown"
+
+        if fhir_data.get("resourceType") == "Bundle":
+            for entry in fhir_data.get("entry", []):
+                resource = entry.get("resource", {})
+                if resource.get("resourceType") == "Patient":
+                    patient = resource
+                    patient_ref = f"Patient/{resource.get('id', 'unknown')}"
+                    break
+        elif fhir_data.get("resourceType") == "Patient":
+            patient = fhir_data
+            patient_ref = f"Patient/{fhir_data.get('id', 'unknown')}"
+
+        age = self._calculate_age(patient.get("birthDate") if patient else None)
+        return RiskAssessmentInput(age=age), patient_ref
+
+    def _calculate_age(self, birth_date_str: str) -> int:
+        """Calculate age in years from a FHIR birthDate string (YYYY-MM-DD or YYYY)."""
+        if not birth_date_str:
+            return 65  # fallback when birthDate is absent
+        try:
+            parts = birth_date_str.split("-")
+            year = int(parts[0])
+            month = int(parts[1]) if len(parts) > 1 else 1
+            day = int(parts[2]) if len(parts) > 2 else 1
+            today = date.today()
+            age = today.year - year - ((today.month, today.day) < (month, day))
+            return max(0, age)
+        except (ValueError, IndexError):
+            return 65
+
+    def _build_risk_assessment(self, risk_result: RiskCalculationResult, patient_ref: str) -> dict:
+        """Build a FHIR R4 RiskAssessment resource from a HAPI risk calculation result."""
+        return {
+            "resourceType": "RiskAssessment",
+            "status": "final",
+            "method": {
+                "coding": [{
+                    "system": "http://snomed.info/sct",
+                    "code": "225338004",
+                    "display": "Risk assessment (procedure)"
+                }],
+                "text": "Reese et al. (2024) HAPI logistic regression model"
+            },
+            "code": {
+                "coding": [{
+                    "system": "http://snomed.info/sct",
+                    "code": "225392000",
+                    "display": "Assessment of risk of pressure injury (procedure)"
+                }]
+            },
+            "subject": {"reference": patient_ref},
+            "occurrenceDateTime": datetime.now(timezone.utc).isoformat(),
+            "performer": {"display": "IRIS CDS HAPI Risk Calculator"},
+            "prediction": [{
+                "outcome": {
+                    "coding": [{
+                        "system": "http://snomed.info/sct",
+                        "code": "709511002",
+                        "display": "Assessment of risk for hospital acquired complication (procedure)"
+                    }]
+                },
+                "probabilityDecimal": risk_result.risk_percentage,
+                "qualitativeRisk": {
+                    "coding": [{
+                        "system": "http://terminology.hl7.org/CodeSystem/risk-probability",
+                        "code": risk_result.risk_category,
+                        "display": risk_result.risk_category.capitalize()
+                    }]
+                },
+                "rationale": (
+                    f"95% CI: {risk_result.ci_lower:.2f}%\u2013{risk_result.ci_upper:.2f}%, "
+                    f"Z-score: {risk_result.z_score:.3f}"
+                )
+            }],
+            "mitigation": (
+                "Implement pressure injury prevention protocol: reposition every 2 hours, "
+                "use pressure-relieving mattress, maintain skin integrity assessment."
+            )
+        }
+
+    def _add_to_bundle(self, fhir_data: dict, risk_assessment: dict) -> dict:
+        """Add the RiskAssessment to a FHIR Bundle, or wrap it in one if needed."""
+        entry = {
+            "fullUrl": f"urn:uuid:{uuid.uuid4()}",
+            "resource": risk_assessment,
+            # required by IRIS DefaultBundleProcessor for transaction bundles
+            "request": {
+                "method": "POST",
+                "url": "RiskAssessment"
+            }
+        }
+        if fhir_data.get("resourceType") == "Bundle":
+            fhir_data.setdefault("entry", []).append(entry)
+        else:
+            fhir_data = {
+                "resourceType": "Bundle",
+                "type": "transaction",
+                "entry": [
+                    {"resource": fhir_data},
+                    entry
+                ]
+            }
+        return fhir_data
 
 
 class FhirMainProcess(BusinessProcess):
