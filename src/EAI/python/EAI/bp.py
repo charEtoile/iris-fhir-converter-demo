@@ -53,7 +53,7 @@ class FhirConverterProcess(BusinessProcess):
 
             # send this to the FHIR server
             fhir_request = FhirRequest(
-                url='https://webgateway',
+                url='http://localhost:52773',
                 resource='fhir/r4/',
                 method='POST',
                 data=converted_rsp.output_data,
